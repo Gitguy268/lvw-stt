@@ -1,0 +1,204 @@
+{
+ "model": "phonon-base",
+ "set": "cv22-test",
+ "tag": "baseline",
+ "kind": "parakeet",
+ "avg": 13.002,
+ "n_langs": 24,
+ "rtf": 59.3,
+ "audio_h": 4.86,
+ "per_lang": {
+  "en": {
+   "err": 12.137,
+   "n": 150,
+   "metric": "wer",
+   "sub": 116,
+   "del": 42,
+   "ins": 5
+  },
+  "es": {
+   "err": 9.944,
+   "n": 150,
+   "metric": "wer",
+   "sub": 76,
+   "del": 11,
+   "ins": 20
+  },
+  "fr": {
+   "err": 4.703,
+   "n": 150,
+   "metric": "wer",
+   "sub": 60,
+   "del": 4,
+   "ins": 1
+  },
+  "de": {
+   "err": 6.879,
+   "n": 150,
+   "metric": "wer",
+   "sub": 64,
+   "del": 9,
+   "ins": 7
+  },
+  "it": {
+   "err": 6.897,
+   "n": 150,
+   "metric": "wer",
+   "sub": 79,
+   "del": 9,
+   "ins": 14
+  },
+  "pt": {
+   "err": 8.942,
+   "n": 150,
+   "metric": "wer",
+   "sub": 66,
+   "del": 20,
+   "ins": 7
+  },
+  "nl": {
+   "err": 10.434,
+   "n": 150,
+   "metric": "wer",
+   "sub": 118,
+   "del": 6,
+   "ins": 13
+  },
+  "pl": {
+   "err": 6.13,
+   "n": 150,
+   "metric": "wer",
+   "sub": 48,
+   "del": 12,
+   "ins": 4
+  },
+  "ru": {
+   "err": 8.238,
+   "n": 150,
+   "metric": "wer",
+   "sub": 80,
+   "del": 10,
+   "ins": 11
+  },
+  "uk": {
+   "err": 9.756,
+   "n": 150,
+   "metric": "wer",
+   "sub": 91,
+   "del": 10,
+   "ins": 7
+  },
+  "ro": {
+   "err": 12.971,
+   "n": 150,
+   "metric": "wer",
+   "sub": 128,
+   "del": 8,
+   "ins": 5
+  },
+  "cs": {
+   "err": 5.231,
+   "n": 150,
+   "metric": "wer",
+   "sub": 44,
+   "del": 5,
+   "ins": 3
+  },
+  "sk": {
+   "err": 17.621,
+   "n": 150,
+   "metric": "wer",
+   "sub": 74,
+   "del": 2,
+   "ins": 4
+  },
+  "bg": {
+   "err": 20.641,
+   "n": 150,
+   "metric": "wer",
+   "sub": 230,
+   "del": 28,
+   "ins": 32
+  },
+  "sv": {
+   "err": 15.385,
+   "n": 150,
+   "metric": "wer",
+   "sub": 89,
+   "del": 23,
+   "ins": 12
+  },
+  "da": {
+   "err": 14.187,
+   "n": 150,
+   "metric": "wer",
+   "sub": 126,
+   "del": 20,
+   "ins": 18
+  },
+  "fi": {
+   "err": 9.513,
+   "n": 150,
+   "metric": "wer",
+   "sub": 70,
+   "del": 9,
+   "ins": 5
+  },
+  "et": {
+   "err": 20.774,
+   "n": 150,
+   "metric": "wer",
+   "sub": 302,
+   "del": 53,
+   "ins": 37
+  },
+  "lv": {
+   "err": 12.57,
+   "n": 150,
+   "metric": "wer",
+   "sub": 82,
+   "del": 4,
+   "ins": 4
+  },
+  "lt": {
+   "err": 16.997,
+   "n": 150,
+   "metric": "wer",
+   "sub": 159,
+   "del": 17,
+   "ins": 4
+  },
+  "hu": {
+   "err": 19.053,
+   "n": 150,
+   "metric": "wer",
+   "sub": 149,
+   "del": 18,
+   "ins": 18
+  },
+  "sl": {
+   "err": 20.633,
+   "n": 150,
+   "metric": "wer",
+   "sub": 138,
+   "del": 26,
+   "ins": 12
+  },
+  "mt": {
+   "err": 13.758,
+   "n": 150,
+   "metric": "wer",
+   "sub": 134,
+   "del": 30,
+   "ins": 11
+  },
+  "el": {
+   "err": 28.665,
+   "n": 150,
+   "metric": "wer",
+   "sub": 229,
+   "del": 21,
+   "ins": 12
+  }
+ }
+}

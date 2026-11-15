@@ -1,0 +1,11 @@
+torch>=2.10
+qwen-asr
+peft
+datasets>=4.0
+huggingface_hub
+soundfile
+librosa
+jiwer
+whisper-normalizer
+psutil
+sentencepiece

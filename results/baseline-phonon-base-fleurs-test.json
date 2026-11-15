@@ -1,0 +1,212 @@
+{
+ "model": "phonon-base",
+ "set": "fleurs-test",
+ "tag": "baseline",
+ "kind": "parakeet",
+ "avg": 13.915,
+ "n_langs": 25,
+ "rtf": 65.41,
+ "audio_h": 15.27,
+ "per_lang": {
+  "en": {
+   "err": 6.576,
+   "n": 200,
+   "metric": "wer",
+   "sub": 149,
+   "del": 41,
+   "ins": 96
+  },
+  "es": {
+   "err": 4.312,
+   "n": 200,
+   "metric": "wer",
+   "sub": 124,
+   "del": 17,
+   "ins": 66
+  },
+  "fr": {
+   "err": 8.568,
+   "n": 200,
+   "metric": "wer",
+   "sub": 270,
+   "del": 61,
+   "ins": 114
+  },
+  "de": {
+   "err": 8.378,
+   "n": 200,
+   "metric": "wer",
+   "sub": 203,
+   "del": 25,
+   "ins": 118
+  },
+  "it": {
+   "err": 5.956,
+   "n": 200,
+   "metric": "wer",
+   "sub": 123,
+   "del": 22,
+   "ins": 120
+  },
+  "pt": {
+   "err": 7.434,
+   "n": 200,
+   "metric": "wer",
+   "sub": 166,
+   "del": 32,
+   "ins": 125
+  },
+  "nl": {
+   "err": 11.039,
+   "n": 200,
+   "metric": "wer",
+   "sub": 310,
+   "del": 46,
+   "ins": 140
+  },
+  "pl": {
+   "err": 11.543,
+   "n": 200,
+   "metric": "wer",
+   "sub": 299,
+   "del": 32,
+   "ins": 100
+  },
+  "ru": {
+   "err": 9.341,
+   "n": 200,
+   "metric": "wer",
+   "sub": 239,
+   "del": 21,
+   "ins": 83
+  },
+  "uk": {
+   "err": 9.683,
+   "n": 200,
+   "metric": "wer",
+   "sub": 253,
+   "del": 33,
+   "ins": 81
+  },
+  "ro": {
+   "err": 12.879,
+   "n": 200,
+   "metric": "wer",
+   "sub": 395,
+   "del": 88,
+   "ins": 108
+  },
+  "cs": {
+   "err": 13.285,
+   "n": 200,
+   "metric": "wer",
+   "sub": 335,
+   "del": 31,
+   "ins": 114
+  },
+  "sk": {
+   "err": 11.462,
+   "n": 200,
+   "metric": "wer",
+   "sub": 299,
+   "del": 43,
+   "ins": 93
+  },
+  "bg": {
+   "err": 14.261,
+   "n": 200,
+   "metric": "wer",
+   "sub": 403,
+   "del": 73,
+   "ins": 109
+  },
+  "hr": {
+   "err": 13.799,
+   "n": 200,
+   "metric": "wer",
+   "sub": 374,
+   "del": 50,
+   "ins": 94
+  },
+  "sv": {
+   "err": 16.012,
+   "n": 200,
+   "metric": "wer",
+   "sub": 438,
+   "del": 81,
+   "ins": 113
+  },
+  "da": {
+   "err": 18.816,
+   "n": 200,
+   "metric": "wer",
+   "sub": 576,
+   "del": 87,
+   "ins": 125
+  },
+  "fi": {
+   "err": 14.694,
+   "n": 200,
+   "metric": "wer",
+   "sub": 320,
+   "del": 33,
+   "ins": 89
+  },
+  "et": {
+   "err": 17.104,
+   "n": 200,
+   "metric": "wer",
+   "sub": 368,
+   "del": 43,
+   "ins": 137
+  },
+  "lv": {
+   "err": 18.001,
+   "n": 200,
+   "metric": "wer",
+   "sub": 439,
+   "del": 32,
+   "ins": 136
+  },
+  "lt": {
+   "err": 20.605,
+   "n": 200,
+   "metric": "wer",
+   "sub": 525,
+   "del": 46,
+   "ins": 96
+  },
+  "hu": {
+   "err": 16.99,
+   "n": 200,
+   "metric": "wer",
+   "sub": 451,
+   "del": 48,
+   "ins": 96
+  },
+  "sl": {
+   "err": 20.248,
+   "n": 200,
+   "metric": "wer",
+   "sub": 551,
+   "del": 69,
+   "ins": 165
+  },
+  "mt": {
+   "err": 19.846,
+   "n": 200,
+   "metric": "wer",
+   "sub": 625,
+   "del": 100,
+   "ins": 151
+  },
+  "el": {
+   "err": 37.038,
+   "n": 200,
+   "metric": "wer",
+   "sub": 1440,
+   "del": 63,
+   "ins": 150
+  }
+ }
+}

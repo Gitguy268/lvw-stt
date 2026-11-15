@@ -1,0 +1,9 @@
+envs/
+third_party/
+data/
+runs/
+results/*.jsonl
+release/
+__pycache__/
+*.gguf
+*.safetensors
