@@ -2,7 +2,8 @@ envs/
 third_party/
 data/
 runs/
-results/*.jsonl
+results/**/*.jsonl
+results/eval-repo/
 release/
 __pycache__/
 *.gguf

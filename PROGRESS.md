@@ -57,3 +57,26 @@ Export, prune, GGUF and publish have still never run; they come after training a
 - trainlib.device()/mem_gb(), evaluate.device() now pick cuda → mps → cpu; run.sh uses caffeinate only when present and setup accepts CUDA or Metal.
 - Mac still picks mps (checked). CUDA path never run. Originals in runs/pre-cuda-backup/. Rental steps: ~/RENT-GPU.md.
 - Last `run.sh all` (2026-11-11) was stopped by hand during baseline; baseline not marked done.
+
+## en-nl track: Phonon-2.5-English + Dutch -> LvW-STT-EN-NL-0.6B (started 2026-11-15)
+
+Plan: ~/.claude/plans/i-want-to-improve-synchronous-mango.md. One command: `bash run.sh en-nl` (resumable, markers in
+runs/en-nl/.done/, log in runs/en-nl/run-*.log). Separate data (data/train-en-nl), results (results/en-nl) and runs
+(runs/en-nl); the eu profile is unchanged (default, LVW_PROFILE unset).
+
+- [x] Code: LVW_PROFILE switch (paths.py), pinned fetch of Phonon-2.5-English @ da200358 with tar + container sha
+      checks, dense dirs record their container (load_parakeet can no longer load the wrong one), ESB English
+      eval subsets (cluster-sampled, the set is length-sorted), en/nl test + dev sets, train leak check, explicit
+      60/40 nl/en mix, en+nl dev selection, calibration gate vs the card, en-nl gate, dry run, card + GGUF + publish.
+- [x] All modules parse and import under both profiles; transcribe.cpp patched with the lvw-stt-en-nl-0.6b profile.
+- [ ] Nothing has run yet: blocked on disk (1.6–3 GB free on 2026-11-15 while other sessions wrote; stages need the
+      6 GB reserve + their own size). Order: fetch-en, expand-en, eval-sets, calibrate, dryrun, prepare, smoke, train,
+      export, clean-audio, evaluate (gate), publish (private), then `LVW_PROFILE=en-nl bash run.sh publish --public`.
+
+Gate (user's choice "no English loss"): ESB-7 English average not worse, no English set > 3% worse; Dutch >= 3%
+better than stock Phonon-2.5-English and <= 5% worse than Phonon-2.5 (25 langs). If it fails: more English replay,
+`rm -rf data/train-en-nl runs/en-nl/parakeet-ft runs/en-nl/.done/{prepare,smoke-parakeet,train-parakeet,export,clean-audio,evaluate}`
+then `LVW_PROFILE=en-nl bash run.sh prepare --mix en=0.5,nl=0.5` and `bash run.sh en-nl`.
+
+Disk at the GGUF stage: fp32 release (2.5 GB) + F32 GGUF (2.5 GB) exist together, plus a quant, plus the 6 GB reserve:
+about 10 GB free is needed when publish starts (our other files ~1 GB by then).

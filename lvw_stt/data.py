@@ -2,6 +2,7 @@
 
   python -m lvw_stt.data eval     FLEURS test/dev + CV22 test subsets (FLAC, for scoring / checkpoint selection)
   python -m lvw_stt.data prepare  training audio: FLEURS train, CV22 train, VoxPopuli train (Opus or FLAC)
+  python -m lvw_stt.data eval-en-nl   en-nl profile: ESB English test subsets, Dutch/English test sets, en+nl dev set
 
 Nothing here ever reads a test split into the training manifest. Audio is read with HTTP range requests
 (parquet row groups / tar streams), so only the kept clips touch the disk.
@@ -25,6 +26,7 @@ import soundfile as sf
 
 from lvw_stt import langs
 from lvw_stt.disk import ROOT, free_gb, guard
+from lvw_stt.paths import EN_NL_DEV, ESB_SETS, PROFILE, TRAIN_DIR
 
 DATA = ROOT / "data"
 SR = 16000
@@ -32,6 +34,13 @@ MIN_S, MAX_S = 1.0, 20.0
 FLEURS = "datasets/google/fleurs"
 CV = "datasets/fsicoli/common_voice_22_0"
 VOX = "datasets/facebook/voxpopuli"
+ESB = "datasets/hf-audio/esb-datasets-test-only-sorted"
+# set name -> (ESB config folder, split file prefix). These are the Open ASR Leaderboard's English test sets.
+ESB_CFG = {"esb-ls-clean": ("librispeech", "test.clean"), "esb-ls-other": ("librispeech", "test.other"),
+           "esb-ami": ("ami", "test"), "esb-earnings22": ("earnings22", "test"), "esb-gigaspeech": ("gigaspeech", "test"),
+           "esb-spgispeech": ("spgispeech", "test"), "esb-voxpopuli": ("voxpopuli", "test")}
+assert list(ESB_CFG) == ESB_SETS
+ESB_SKIP = "ignore_time_segment_in_scoring"
 TEXT_COLS = ("raw_transcription", "raw_text", "sentence", "text")
 
 _fs = None
@@ -156,13 +165,54 @@ def cv_rows(code: str, split: str, seed: int):
                 yield name.rsplit(".", 1)[0], tf.extractfile(m).read(), r["sentence"]
 
 
-SOURCES = {"fleurs": fleurs_rows, "cv22": cv_rows, "voxpopuli": voxpopuli_rows}
+def esb_rows(name: str, seed: int, per_group: int = 16):
+    """One ESB English test set. The files are sorted by length, so reading the first rows would give a length-biased
+    sample: row groups are visited in a seeded random order across all shards, and a few random rows are taken from
+    each (cluster sampling; per_group x groups ~= the clip count asked for)."""
+    import pyarrow.parquet as pq
+    cfg, prefix = ESB_CFG[name]
+    paths = sorted(fs().glob(f"{ESB}/{cfg}/{prefix}-*.parquet"))
+    if not paths:
+        raise RuntimeError(f"{ESB}/{cfg}/{prefix}-*.parquet: no files")
+    pairs = []
+    for p in paths:
+        with fs().open(p, "rb", block_size=1 << 20) as f:
+            pairs += [(p, g) for g in range(pq.ParquetFile(f).num_row_groups)]
+    rng = random.Random(seed)
+    rng.shuffle(pairs)
+    for p, g in pairs:
+        with fs().open(p, "rb", block_size=4 << 20) as f:
+            t = pq.ParquetFile(f).read_row_group(g, columns=["audio", "text", "id"]).to_pylist()
+        rng.shuffle(t)
+        taken = 0
+        for r in t:
+            if taken >= per_group:
+                break
+            text = r.get("text") or ""
+            a = r["audio"]
+            raw = a.get("bytes") if isinstance(a, dict) else None
+            if not raw or not text.strip() or ESB_SKIP in text:
+                continue
+            taken += 1
+            yield str(r["id"]).replace("/", "_"), raw, text
+
+
+def _esb_source(name: str):
+    def rows(code: str, split: str, seed: int):
+        assert code == "en" and split == "test", (name, code, split)
+        yield from esb_rows(name, seed)
+    return rows
+
+
+SOURCES = {"fleurs": fleurs_rows, "cv22": cv_rows, "voxpopuli": voxpopuli_rows,
+           **{n: _esb_source(n) for n in ESB_CFG}}
 
 
 # ---------------------------------------------------------------- collection
 
 def collect(out: Path, code: str, source: str, split: str, *, max_utts: int | None = None,
-            max_hours: float | None = None, codec: str = "flac", seed: int = 0, seen: set | None = None):
+            max_hours: float | None = None, codec: str = "flac", seed: int = 0, seen: set | None = None,
+            min_s: float = MIN_S, max_s: float = MAX_S):
     """Write up to max_utts / max_hours clips; returns manifest rows. Resumable via `seen`."""
     rows, hours = [], 0.0
     seen = seen or set()
@@ -181,7 +231,7 @@ def collect(out: Path, code: str, source: str, split: str, *, max_utts: int | No
             print(f"  skip {uid}: {e}", file=sys.stderr)
             continue
         dur = len(w) / SR
-        if not (MIN_S <= dur <= MAX_S):
+        if not (min_s <= dur <= max_s):
             continue
         if len(rows) % 200 == 0:
             guard(0.3, what=f"{source}/{code}")
@@ -246,15 +296,21 @@ def stage_prepare(a) -> None:
         codec = "flac"
     mb_per_hour = 15 if codec == "opus" else 65   # 32 kbps Opus vs 16-bit FLAC speech
     hours_total = a.gb * 1000 / mb_per_hour
-    codes = a.langs or langs.ALL_LANGS
-    w = weights(codes, a.tau)
-    man = DATA / "train" / "manifest.jsonl"
+    if a.mix:                                   # explicit language shares (en-nl profile), no baseline weighting
+        w = parse_mix(a.mix)
+        codes = list(w)
+    else:
+        codes = a.langs or langs.ALL_LANGS
+        w = weights(codes, a.tau)
+    man = TRAIN_DIR / "manifest.jsonl"
     have = read_jsonl(man)
     seen = {r["id"] for r in have}
     got = defaultdict(float)
     for r in have:
         got[(r["lang"], r["source"])] += r["dur"] / 3600
-    split_share = {"fleurs": 0.45, "cv22": 0.35, "voxpopuli": 0.20}
+    split_share = parse_mix(a.shares) if a.shares else {"fleurs": 0.45, "cv22": 0.35, "voxpopuli": 0.20}
+    assert set(split_share) <= {"fleurs", "cv22", "voxpopuli"}, split_share
+    print(f"language shares: {w}; source shares: {split_share}")
     print(f"budget {a.gb} GB ≈ {hours_total:.0f} h ({codec}); {len(codes)} languages")
     for code in codes:
         quota = hours_total * w[code]
@@ -266,7 +322,7 @@ def stage_prepare(a) -> None:
             if want <= 0.01:
                 carry = 0.0
                 continue
-            rows = collect(DATA / "train", code, source, "train", max_hours=want, codec=codec, seed=a.seed, seen=seen)
+            rows = collect(TRAIN_DIR, code, source, "train", max_hours=want, codec=codec, seed=a.seed, seen=seen)
             h = sum(r["dur"] for r in rows) / 3600
             carry = max(0.0, want - h)          # FLEURS caps at ~10 h/lang; spill to the next source
             append_jsonl(man, rows)
@@ -285,9 +341,88 @@ def report(man: Path) -> None:
         lines.append(f"| {code} | {d['fleurs']:.2f} | {d['cv22']:.2f} | {d['voxpopuli']:.2f} | {sum(d.values()):.2f} |")
     tot = sum(sum(d.values()) for d in by.values())
     lines.append(f"| **all** | | | | **{tot:.1f}** |")
-    (ROOT / "results").mkdir(exist_ok=True)
-    (ROOT / "results" / "train-data.md").write_text("\n".join(lines) + "\n")
+    from lvw_stt.paths import RESULTS
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    (RESULTS / "train-data.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
+
+
+def parse_mix(s: str) -> dict[str, float]:
+    out = {}
+    for part in s.split(","):
+        k, v = part.split("=")
+        out[k.strip()] = float(v)
+    tot = sum(out.values())
+    if not out or tot <= 0:
+        raise SystemExit(f"bad mix {s!r}")
+    return {k: v / tot for k, v in out.items()}
+
+
+def _fill(name: str, code: str, source: str, split: str, n: int, *, min_s=MIN_S, max_s=MAX_S,
+          copy_from: str | None = None) -> None:
+    """Top manifest data/eval/<name>.jsonl up to n clips of `code`. copy_from re-uses clips already on disk from the
+    EU eval set (same files, no download) and then adds new, different clips."""
+    out = DATA / "eval"
+    man = out / f"{name}.jsonl"
+    have = [r for r in read_jsonl(man) if r["lang"] == code]
+    if copy_from and not have:
+        old = [r for r in read_jsonl(out / f"{copy_from}.jsonl") if r["lang"] == code][:n]
+        append_jsonl(man, old)
+        have = old
+    if len(have) >= n:
+        print(f"{name:20s} {code}: {len(have)} clips (done)")
+        return
+    seen = {r["id"] for r in read_jsonl(man)}
+    if copy_from:
+        seen |= {r["id"] for r in read_jsonl(out / f"{copy_from}.jsonl")}
+    rows = collect(out / name, code, source, split, max_utts=n - len(have), codec="flac", seed=1, seen=seen,
+                   min_s=min_s, max_s=max_s)
+    append_jsonl(man, rows)
+    print(f"{name:20s} {code}: +{len(rows)} -> {len(have) + len(rows)} clips  ({free_gb():.1f} GB free)")
+
+
+def stage_eval_en_nl(a) -> None:
+    """en-nl scoring + dev sets. Test splits only for scoring; dev for checkpoint selection; never train splits."""
+    if PROFILE != "en-nl":
+        raise SystemExit("run with LVW_PROFILE=en-nl")
+    n = a.per_set
+    guard(1.0, what="en-nl eval sets")
+    for name in ESB_SETS:                                       # the 7 English sets on Phonon-2.5-English's card
+        _fill(name, "en", name, "test", n, min_s=0.0, max_s=60.0)
+    for code in ("en", "nl"):                                   # FLEURS test: all sentences (one recording each)
+        _fill("fleurs-test-en-nl", code, "fleurs", "test", n, min_s=0.0, max_s=60.0, copy_from="fleurs-test")
+        _fill("cv22-test-en-nl", code, "cv22", "test", n, copy_from="cv22-test")
+    _fill("voxpopuli-test-nl", "nl", "voxpopuli", "test", n, min_s=0.0, max_s=60.0)
+    # dev: FLEURS dev (already on disk) + VoxPopuli validation + CV22 dev, per language
+    dev = EN_NL_DEV
+    have = read_jsonl(dev)
+    if not have:
+        rows = [r for r in read_jsonl(DATA / "eval" / "fleurs-dev.jsonl") if r["lang"] in ("en", "nl")]
+        append_jsonl(dev, rows)
+        have = rows
+    count = defaultdict(int)
+    for r in have:
+        count[(r["lang"], r["source"])] += 1
+    seen = {r["id"] for r in have}
+    for code in ("en", "nl"):
+        for source in ("voxpopuli", "cv22"):
+            want = 60 - count[(code, source)]
+            if want > 0:
+                rows = collect(DATA / "eval" / "dev-en-nl", code, source, "validation", max_utts=want, codec="flac",
+                               seed=1, seen=seen)
+                append_jsonl(dev, rows)
+                print(f"dev-en-nl            {code} {source}: +{len(rows)}")
+    report_eval_en_nl()
+
+
+def report_eval_en_nl() -> None:
+    from lvw_stt.paths import EN_NL_SETS
+    for name in EN_NL_SETS + ["dev-en-nl"]:
+        rows = read_jsonl(DATA / "eval" / f"{name}.jsonl")
+        by = defaultdict(lambda: [0, 0.0])
+        for r in rows:
+            by[r["lang"]][0] += 1; by[r["lang"]][1] += r["dur"] / 3600
+        print(f"  {name:20s} " + "  ".join(f"{c}: {k} clips {h:.2f} h" for c, (k, h) in sorted(by.items())))
 
 
 def main() -> None:
@@ -304,14 +439,20 @@ def main() -> None:
     p.add_argument("--tau", type=float, default=0.5)
     p.add_argument("--seed", type=int, default=43)
     p.add_argument("--langs", nargs="*")
+    p.add_argument("--mix", help="explicit language shares, e.g. en=0.4,nl=0.6 (replaces baseline weighting)")
+    p.add_argument("--shares", help="source shares, e.g. fleurs=0.15,cv22=0.45,voxpopuli=0.40")
+    en = sub.add_parser("eval-en-nl")
+    en.add_argument("--per-set", type=int, default=400)
     sub.add_parser("report")
     a = ap.parse_args()
     if a.cmd == "eval":
         stage_eval(a)
     elif a.cmd == "prepare":
         stage_prepare(a)
+    elif a.cmd == "eval-en-nl":
+        stage_eval_en_nl(a)
     else:
-        report(DATA / "train" / "manifest.jsonl")
+        report(TRAIN_DIR / "manifest.jsonl")
 
 
 if __name__ == "__main__":

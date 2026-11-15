@@ -4,6 +4,7 @@
   python -m lvw_stt.gguf.ladder --family qwen               # Qwen side via llama.cpp (decoder ladder + mmproj)
   python -m lvw_stt.gguf.ladder --family eu --quant Q4_K_M  # one quant
   python -m lvw_stt.gguf.ladder --family qwen --upload      # also upload each file to the (private) GGUF repo
+  LVW_PROFILE=en-nl python -m lvw_stt.gguf.ladder --family en-nl [--upload]
 
 Without --upload every quant is deleted after scoring (the disk cannot hold both ladders); re-quantizing for the
 upload takes seconds. Results: results/gguf-<family>.json.
@@ -18,11 +19,12 @@ import sys
 from pathlib import Path
 
 from lvw_stt.disk import ROOT, guard
-from lvw_stt.paths import EU_NAME, HF_USER, LLAMA_BIN, QW_NAME, RELEASE, RESULTS, RUNS, TP, TRANSCRIBE_QUANT
+from lvw_stt.paths import (EN_NL_NAME, EU_NAME, HF_USER, LLAMA_BIN, PROFILE, PROFILE_RUNS, QW_NAME, RELEASE, RESULTS,
+                           TP, TRANSCRIBE_QUANT)
 
 PY_PK = ROOT / "envs" / "parakeet" / "bin" / "python"
 PY_QW = ROOT / "envs" / "qwen" / "bin" / "python"
-WORK = RUNS / "gguf"
+WORK = PROFILE_RUNS / "gguf"
 
 EU_QUANTS = ["F16", "Q8_0", "Q6_K", "Q5_K_M", "Q5_1", "Q5_0", "Q4_K_M", "Q4_1", "Q4_0"]   # transcribe-quantize presets
 QW_QUANTS = ["F16", "Q8_0", "Q6_K", "Q5_K_M", "Q5_K_S", "Q5_0", "Q4_K_M", "Q4_K_S", "Q4_0", "IQ4_XS", "IQ4_NL",
@@ -30,7 +32,15 @@ QW_QUANTS = ["F16", "Q8_0", "Q6_K", "Q5_K_M", "Q5_K_S", "Q5_0", "Q4_K_M", "Q4_K_
 NEEDS_IMATRIX = {"IQ4_XS", "IQ4_NL", "Q3_K_L", "Q3_K_M", "Q3_K_S", "IQ3_M", "Q2_K", "IQ2_M"}
 MMPROJ_TYPES = ["f16", "bf16", "q8_0"]
 LIMIT = 50       # FLEURS-test utterances per language for every quant
+LIMIT_EN_NL = 100  # only two languages, so more clips each
 PARITY_MIN = {"eu": 0.98, "qwen": 0.90}
+# Bits per weight (approximate, incl. scales) -> disk guard per quant, from the F32 file size
+BPW = {"F16": 16, "BF16": 16, "Q8_0": 8.5, "Q6_K": 6.6, "Q5_K_M": 5.7, "Q5_K_S": 5.5, "Q5_1": 6, "Q5_0": 5.5,
+       "Q4_K_M": 4.9, "Q4_K_S": 4.6, "Q4_1": 5, "Q4_0": 4.5}
+
+
+def quant_gb(top: Path, q: str) -> float:
+    return 0.2 + 1.15 * top.stat().st_size / 1e9 * BPW.get(q, 16) / 32
 
 
 def sh(cmd, **kw):
@@ -39,7 +49,8 @@ def sh(cmd, **kw):
 
 
 def evaluate(py: Path, args: list[str], label: str, tag: str = "gguf") -> dict:
-    sh([py, "-m", "lvw_stt.evaluate", *args, "--tag", tag, "--label", label, "--sets", "fleurs-test", "--limit", LIMIT],
+    limit = LIMIT_EN_NL if PROFILE == "en-nl" else LIMIT
+    sh([py, "-m", "lvw_stt.evaluate", *args, "--tag", tag, "--label", label, "--sets", "fleurs-test", "--limit", limit],
        cwd=ROOT)
     return json.loads((RESULTS / f"{tag}-{label}-fleurs-test.json").read_text())
 
@@ -76,30 +87,46 @@ def record(family: str, row: dict) -> None:
 
 def ladder_eu(a, fast: bool) -> None:
     name = f"{EU_NAME}-Fast" if fast else EU_NAME
-    src = RELEASE / name
+    ladder_parakeet(a, name, "eu-fast" if fast else "eu", "parakeet-fast" if fast else "parakeet-ft", RELEASE / name)
+
+
+def ladder_parakeet(a, name: str, family: str, hf_label: str, src: Path, hf_args: list[str] | None = None,
+                    drop_src_after_parity: bool = False) -> None:
+    """name: public file prefix; family: results file key; hf_label: evaluate --model of the HF reference."""
     key = name.lower()
     d = WORK / key
     d.mkdir(parents=True, exist_ok=True)
     top = d / f"{key}-F32.gguf"                       # folder + file name select the converter profile
-    if not top.exists():
+    pub = d / f"{name}-F32.gguf"
+    w = src / "model.safetensors"
+    for old in (top, pub):                             # left over from a run on older weights
+        if old.exists() and w.exists() and w.stat().st_mtime > old.stat().st_mtime:
+            old.unlink()
+    if not top.exists() and not pub.exists():
         guard(2.6, what="F32 GGUF")
         sh([PY_PK, TP / "transcribe.cpp" / "scripts" / "convert-parakeet.py", src, top], cwd=TP / "transcribe.cpp")
-    family = "eu-fast" if fast else "eu"
-    hf_label = "parakeet-fast" if fast else "parakeet-ft"
-    evaluate(PY_PK, ["--model", hf_label], f"{hf_label}-hf", tag="gguf-ref")
-    pub = d / f"{name}-F32.gguf"
-    shutil.move(top, pub) if not pub.exists() else None
+    ref_label = f"{hf_label}-hf"
+    ref_file = RESULTS / f"gguf-ref-{ref_label}-fleurs-test.json"
+    weights = src / "model.safetensors"
+    stale = not ref_file.exists() or (weights.exists() and weights.stat().st_mtime > ref_file.stat().st_mtime)
+    if stale:                                          # the HF reference is only re-scored when the weights changed
+        evaluate(PY_PK, hf_args or ["--model", hf_label], ref_label, tag="gguf-ref")
+    if not pub.exists():
+        shutil.move(top, pub)
     ref = evaluate(PY_PK, ["--gguf", pub], pub.stem)
-    p = parity(f"{hf_label}-hf", pub.stem, "gguf-ref", "gguf")
+    p = parity(ref_label, pub.stem, "gguf-ref", "gguf")
     print(f"parity F32 GGUF vs HF: {100 * p:.1f}% identical transcripts")
     if p < PARITY_MIN["eu"]:
         sys.exit(f"parity {p:.3f} < {PARITY_MIN['eu']}: fix conversion before quantizing")
+    if drop_src_after_parity:
+        shutil.rmtree(src)
+        print(f"removed {src} (dry run; not needed after parity)")
     up = Uploader(a.upload and f"{HF_USER}/{name}-GGUF")
     record(family, {"file": pub.name, "quant": "F32", "bytes": pub.stat().st_size, "avg": ref["avg"], "rtf": ref["rtf"],
                     "parity": round(p, 4), "rel_vs_top_pct": 0.0})
     up(pub)
     for q in (a.quant or EU_QUANTS):
-        guard(1.5, what=q)
+        guard(quant_gb(pub, q), what=q)
         f = d / f"{name}-{q}.gguf"
         sh([TRANSCRIBE_QUANT, pub, f, "--quant", q])
         r = evaluate(PY_PK, ["--gguf", f], f.stem)
@@ -177,12 +204,20 @@ def ladder_qwen(a, fast: bool) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--family", choices=["eu", "qwen", "eu-fast", "qwen-fast", "all"], default="all")
+    ap.add_argument("--family", choices=["eu", "qwen", "eu-fast", "qwen-fast", "en-nl", "all"], default="all")
     ap.add_argument("--quant", nargs="*")
     ap.add_argument("--upload", action="store_true", help="upload every file to <user>/<model>-GGUF (private)")
     ap.add_argument("--keep-top", action="store_true")
     a = ap.parse_args()
-    RESULTS.mkdir(exist_ok=True)
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    if (a.family == "en-nl") != (PROFILE == "en-nl"):
+        sys.exit("--family en-nl goes with LVW_PROFILE=en-nl (and the other families with the eu profile)")
+    if a.family == "en-nl":
+        src = RELEASE / EN_NL_NAME
+        if not (src / "model.safetensors").exists():
+            sys.exit(f"no release at {src}; run export first")
+        ladder_parakeet(a, EN_NL_NAME, "en-nl", "en-nl-ft", src)
+        return
     fams = ["eu", "qwen", "eu-fast", "qwen-fast"] if a.family == "all" else [a.family]
     for fam in fams:
         fast = fam.endswith("-fast")

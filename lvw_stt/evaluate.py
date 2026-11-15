@@ -28,7 +28,7 @@ import soundfile as sf
 from lvw_stt import langs
 from lvw_stt.data import DATA, SR, decode, fleurs_rows, read_jsonl
 from lvw_stt.disk import ROOT
-from lvw_stt.paths import LLAMA_BIN, MODELS, RESULTS, TRANSCRIBE_CLI
+from lvw_stt.paths import EN_NL_SETS, LLAMA_BIN, MODELS, PROFILE, PROFILE_LANGS, RESULTS, TRANSCRIBE_CLI
 from lvw_stt.textnorm import score
 
 
@@ -181,7 +181,7 @@ def load_set(name: str, codes: list[str], full: bool, limit: int | None):
 
 def run(backend, kind: str, sets: list[str], codes: list[str], tag: str, label: str, full: bool,
         limit: int | None, chunk: int = 64) -> dict:
-    RESULTS.mkdir(exist_ok=True)
+    RESULTS.mkdir(parents=True, exist_ok=True)
     summary = {}
     for name in sets:
         refs, hyps = defaultdict(list), defaultdict(list)
@@ -204,7 +204,7 @@ def run(backend, kind: str, sets: list[str], codes: list[str], tag: str, label: 
             buf.clear()
 
         out_jsonl.unlink(missing_ok=True)
-        set_codes = [c for c in codes if name != "cv22-test" or langs.cv(c)]
+        set_codes = [c for c in codes if not name.startswith("cv22-test") or langs.cv(c)]
         for item in load_set(name, set_codes, full, limit):
             buf.append(item)
             if len(buf) >= chunk:
@@ -229,7 +229,8 @@ def main() -> None:
     ap.add_argument("--gguf"); ap.add_argument("--mmproj")
     ap.add_argument("--label", help="name in result files (default: model name or gguf stem)")
     ap.add_argument("--tag", default="eval")
-    ap.add_argument("--sets", nargs="+", default=["fleurs-test", "cv22-test"])
+    ap.add_argument("--sets", nargs="+",
+                    default=EN_NL_SETS if PROFILE == "en-nl" else ["fleurs-test", "cv22-test"])
     ap.add_argument("--langs", nargs="*")
     ap.add_argument("--full", action="store_true", help="full FLEURS test sets streamed from the Hub")
     ap.add_argument("--limit", type=int, help="max utterances per language")
@@ -239,7 +240,7 @@ def main() -> None:
         ap.error("--model or --gguf")
     backend, kind = make_backend(a)
     label = a.label or a.model or Path(a.gguf).stem
-    codes = a.langs or (langs.PHONON_LANGS if kind == "parakeet" else langs.QWEN_LANGS)
+    codes = a.langs or PROFILE_LANGS or (langs.PHONON_LANGS if kind == "parakeet" else langs.QWEN_LANGS)
     try:
         run(backend, kind, a.sets, codes, a.tag, label, a.full, a.limit)
     finally:

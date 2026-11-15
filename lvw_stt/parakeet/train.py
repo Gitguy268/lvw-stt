@@ -1,4 +1,5 @@
-"""Fine-tune the dense Phonon-2.5 (ParakeetForTDT) on the 25 EU languages.
+"""Fine-tune a dense Phonon (ParakeetForTDT): Phonon-2.5 on the 25 EU languages (eu profile) or Phonon-2.5-English
+on English + Dutch (LVW_PROFILE=en-nl).
 
 LoRA on every encoder attention / feed-forward projection, full training of the LSTM decoder, joint and encoder
 projector, TDT loss (transformers' pure-PyTorch implementation, works on MPS). Batches are packed by the size of the
@@ -24,7 +25,7 @@ from transformers import AutoProcessor
 from lvw_stt import langs, trainlib
 from lvw_stt.disk import ROOT
 from lvw_stt.parakeet.expand_phonon import load_parakeet
-from lvw_stt.paths import PHONON_DENSE, RUNS
+from lvw_stt.paths import BASE_DENSE, PROFILE, PROFILE_LANGS, PROFILE_RUNS
 from lvw_stt.textnorm import score
 
 LORA_TARGETS = r".*encoder\.layers\.\d+\.(self_attn\.(q_proj|k_proj|v_proj|o_proj)|feed_forward[12]\.linear[12])"
@@ -78,8 +79,8 @@ def load_wave(r: dict):
 
 
 def build(args):
-    proc = AutoProcessor.from_pretrained(PHONON_DENSE)
-    model = load_parakeet(args.init or PHONON_DENSE, dtype=torch.float32)
+    proc = AutoProcessor.from_pretrained(BASE_DENSE)
+    model = load_parakeet(args.init or BASE_DENSE, dtype=torch.float32)
     no_layerdrop(model)
     if args.grad_ckpt:
         model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
@@ -120,8 +121,9 @@ def make_eval(model, proc, codes, per_lang):
             seq = model.generate(input_features=inp["input_features"].to(dev), attention_mask=inp["attention_mask"].to(dev))
             txt = proc.batch_decode(getattr(seq, "sequences", seq), skip_special_tokens=True)
             for r, t in zip(b, txt):
-                refs.setdefault(r["lang"], []).append(r["text"]); hyps.setdefault(r["lang"], []).append(t)
-        errs = [score(refs[c], hyps[c], c)["err"] for c in refs]
+                g = trainlib.dev_group(r)
+                refs.setdefault(g, []).append(r["text"]); hyps.setdefault(g, []).append(t)
+        errs = [score(refs[g], hyps[g], g.split("/")[0])["err"] for g in refs]
         errs = [e for e in errs if not math.isnan(e)]
         return sum(errs) / max(1, len(errs))
     return ev
@@ -129,8 +131,8 @@ def make_eval(model, proc, codes, per_lang):
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=str(RUNS / "parakeet-ft"))
-    ap.add_argument("--init", help="start weights (default: dense Phonon-2.5)")
+    ap.add_argument("--out", default=str(PROFILE_RUNS / "parakeet-ft"))
+    ap.add_argument("--init", help="start weights (default: the profile's dense Phonon)")
     ap.add_argument("--rank", type=int, default=32)
     ap.add_argument("--lr-lora", type=float, default=1e-4)
     ap.add_argument("--lr-full", type=float, default=2e-5)
@@ -142,14 +144,16 @@ def main() -> None:
     ap.add_argument("--no-specaug", dest="specaug", action="store_false")
     ap.add_argument("--no-grad-ckpt", dest="grad_ckpt", action="store_false")
     ap.add_argument("--eval-every", type=int, default=500)
-    ap.add_argument("--dev-per-lang", type=int, default=10)
+    ap.add_argument("--dev-per-lang", type=int, default=60 if PROFILE == "en-nl" else 10,
+                    help="dev clips per group (language, or language+source in en-nl)")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--seed", type=int, default=43)
     args = ap.parse_args()
     torch.manual_seed(args.seed)
 
-    codes = langs.PHONON_LANGS
+    codes = PROFILE_LANGS or langs.PHONON_LANGS
+    print(f"profile {PROFILE}: base {BASE_DENSE.name}, languages {codes}")
     model, proc = build(args)
     rows = trainlib.train_rows(codes, args.smoke, args.seed)
     tok = proc.tokenizer

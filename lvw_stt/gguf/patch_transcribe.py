@@ -14,7 +14,7 @@ PROFILE = '''    "{key}": {{
         "size_label": "{size}",
         "head_kind": "tdt",
         "expected_vocab_size": 8192,
-        "languages": V3_LANGUAGES,
+        "languages": {languages},
         "lang_detect": True,
         "source_format": "hf_safetensors",
         "transformers_runtime": True,
@@ -27,14 +27,20 @@ PROFILE = '''    "{key}": {{
 '''
 
 
+KEYS = [  # (key = output folder name, display name, size label, languages expression)
+    ("lvw-stt-eu-0.6b", "LvW-STT-EU-0.6B", "0.6B", "V3_LANGUAGES"),
+    ("lvw-stt-eu-0.6b-fast", "LvW-STT-EU-0.6B-Fast", "0.5B", "V3_LANGUAGES"),
+    ("lvw-stt-en-nl-0.6b", "LvW-STT-EN-NL-0.6B", "0.6B", '["en", "nl"]'),
+]
+
+
 def main(path: str) -> None:
     p = Path(path)
     s = p.read_text()
-    if '"lvw-stt-eu-0.6b"' in s:
-        print("transcribe.cpp already patched"); return
     assert s.count(ANCHOR) == 1, "convert-parakeet.py layout changed; update the patch"
-    add = PROFILE.format(key="lvw-stt-eu-0.6b", name="LvW-STT-EU-0.6B", size="0.6B") + \
-          PROFILE.format(key="lvw-stt-eu-0.6b-fast", name="LvW-STT-EU-0.6B-Fast", size="0.5B")
+    add = "".join(PROFILE.format(key=k, name=n, size=z, languages=l) for k, n, z, l in KEYS if f'"{k}": {{' not in s)
+    if not add:
+        print("transcribe.cpp already patched"); return
     p.write_text(s.replace(ANCHOR, ANCHOR + add))
     print("patched", p)
 

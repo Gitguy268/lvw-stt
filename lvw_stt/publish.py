@@ -5,6 +5,7 @@
   python -m lvw_stt.publish --public        # after you have looked at the private repos: make them public + collection
 
 A model is only uploaded when results/gate.json says PASS for it (main gate; Fast gate for -Fast).
+With LVW_PROFILE=en-nl the only target is LvW-STT-EN-NL-0.6B (gate en-nl, results/en-nl/gate.json).
 """
 from __future__ import annotations
 
@@ -18,9 +19,10 @@ from huggingface_hub import HfApi
 from lvw_stt import langs
 from lvw_stt.data import DATA, read_jsonl
 from lvw_stt.disk import ROOT
-from lvw_stt.paths import EU_NAME, HF_USER, QW_NAME, RELEASE, RESULTS
+from lvw_stt.paths import (EN_NL_DEV, EN_NL_NAME, EN_NL_SETS, ESB_SETS, EU_NAME, HF_USER, PROFILE, QW_NAME, RELEASE,
+                           RESULTS, TRAIN_DIR)
 
-EVAL_REPO = f"{HF_USER}/LvW-STT-eval"
+EVAL_REPO = f"{HF_USER}/LvW-STT-EN-NL-eval" if PROFILE == "en-nl" else f"{HF_USER}/LvW-STT-eval"
 DATASETS = ["google/fleurs", "fsicoli/common_voice_22_0", "facebook/voxpopuli"]
 
 
@@ -49,6 +51,8 @@ def wer_table(base, new, base_name, new_name) -> str:
 
 
 def gguf_table(family: str, name: str) -> str:
+    note = ("100 utterances per language (English, Dutch) from FLEURS test" if family == "en-nl"
+            else "50 utterances per language from FLEURS test")
     p = RESULTS / f"gguf-{family}.json"
     if not p.exists():
         return "_GGUF results pending._"
@@ -58,12 +62,12 @@ def gguf_table(family: str, name: str) -> str:
         flag = " (not recommended)" if r["rel_vs_top_pct"] > 10 else ""
         out.append(f"| [{r['file']}](https://huggingface.co/{HF_USER}/{name}-GGUF/resolve/main/{r['file']}) | "
                    f"{r['bytes'] / 1e6:,.0f} MB | {r['avg']:.2f} | {r['rel_vs_top_pct']:+.1f}%{flag} | {r['rtf']:.0f} |")
-    out.append("\n\\* 50 utterances per language from FLEURS test, same scoring as the main table.")
+    out.append(f"\n\\* {note}, same scoring as the main table.")
     return "\n".join(out)
 
 
 def data_hours(codes) -> str:
-    rows = [r for r in read_jsonl(DATA / "train" / "manifest.jsonl") if r["lang"] in codes]
+    rows = [r for r in read_jsonl(TRAIN_DIR / "manifest.jsonl") if r["lang"] in codes]
     by = {}
     for r in rows:
         by[r["source"]] = by.get(r["source"], 0) + r["dur"] / 3600
@@ -171,8 +175,109 @@ Apache-2.0. Derived from [Qwen3-ASR-0.6B](https://huggingface.co/Qwen/Qwen3-ASR-
 """
 
 
+SET_NAMES = {"esb-ls-clean": "LibriSpeech test-clean", "esb-ls-other": "LibriSpeech test-other", "esb-ami": "AMI",
+             "esb-earnings22": "Earnings-22", "esb-gigaspeech": "GigaSpeech", "esb-spgispeech": "SPGISpeech",
+             "esb-voxpopuli": "VoxPopuli", "fleurs-test-en-nl": "FLEURS test", "cv22-test-en-nl": "Common Voice 22 test",
+             "voxpopuli-test-nl": "VoxPopuli test"}
+
+
+def en_nl_table(tag: str, model: str) -> str:
+    """WER per set: stock Phonon-2.5-English, stock Phonon-2.5 (25 languages), this model."""
+    cols = [("baseline", "phonon-en-base"), ("baseline", "phonon-multi"), (tag, model)]
+
+    def e(t, m, s, lang):
+        r = res(t, m, s)
+        return r["per_lang"][lang]["err"] if r and lang in r["per_lang"] else None
+
+    def n(s, lang):
+        r = res(tag, model, s)
+        return r["per_lang"][lang]["n"] if r and lang in r["per_lang"] else 0
+
+    out = ["| Language | Test set (clips) | Phonon-2.5 English | Phonon-2.5 (25 languages) | " + EN_NL_NAME + " |",
+           "|---|---|--:|--:|--:|"]
+
+    def row(lang, label, vals):
+        best = min(v for v in vals if v is not None) if any(v is not None for v in vals) else None
+        cells = ["–" if v is None else (f"**{v:.2f}**" if v == best else f"{v:.2f}") for v in vals]
+        out.append(f"| {lang} | {label} | " + " | ".join(cells) + " |")
+
+    for s in ESB_SETS + ["fleurs-test-en-nl", "cv22-test-en-nl"]:
+        row("English", f"{SET_NAMES[s]} ({n(s, 'en')})", [e(t, m, s, "en") for t, m in cols])
+    avg = []
+    for t, m in cols:
+        v = [e(t, m, s, "en") for s in ESB_SETS]
+        avg.append(sum(v) / len(v) if all(x is not None for x in v) else None)
+    row("English", "**Average of the 7 leaderboard sets**", avg)
+    nl_sets = ["fleurs-test-en-nl", "cv22-test-en-nl", "voxpopuli-test-nl"]
+    for s in nl_sets:
+        row("Dutch", f"{SET_NAMES[s]} ({n(s, 'nl')})", [e(t, m, s, "nl") for t, m in cols])
+    avg = []
+    for t, m in cols:
+        v = [e(t, m, s, "nl") for s in nl_sets]
+        avg.append(sum(v) / len(v) if all(x is not None for x in v) else None)
+    row("Dutch", "**Average**", avg)
+    return "\n".join(out)
+
+
+def card_en_nl(tag: str = "ft", model: str = "en-nl-ft") -> str:
+    name = EN_NL_NAME
+    return f"""---
+license: cc-by-4.0
+base_model: FermionResearch/Phonon-2.5-English
+base_model_relation: finetune
+library_name: transformers
+pipeline_tag: automatic-speech-recognition
+language: [en, nl]
+datasets: [{", ".join(DATASETS)}]
+metrics: [wer]
+tags: [speech-to-text, asr, parakeet, tdt, english, dutch, gguf]
+---
+
+# {name}
+
+Speech recognition for English and Dutch. It is a fine-tune of [Phonon-2.5 English](https://huggingface.co/FermionResearch/Phonon-2.5-English), Fermion Research's compressed Parakeet TDT 0.6B v3 student, which was trained for English only. This version adds Dutch, and keeps English level with the original: the average over the 7 Open ASR Leaderboard sets is not worse, and no English set below is more than 3% worse. GGUF files in every size: [{name}-GGUF](https://huggingface.co/{HF_USER}/{name}-GGUF).
+
+## Benchmarks
+
+Word error rate, %, lower is better; the best value in each row is in bold. The scoring code and Whisper-style normalisation are the Open ASR Leaderboard's. The English sets are **random subsets** of the leaderboard's test sets (clip counts in brackets), not the full sets, so they are not directly comparable to leaderboard rows. All three models were scored on exactly the same clips.
+
+{en_nl_table(tag, model)}
+
+## Run it
+
+```python
+# pip install "transformers>=5.22" torch soundfile
+import soundfile as sf, torch
+from transformers import AutoProcessor, ParakeetForTDT
+proc = AutoProcessor.from_pretrained("{HF_USER}/{name}")
+model = ParakeetForTDT.from_pretrained("{HF_USER}/{name}").eval()
+audio, sr = sf.read("audio.wav", dtype="float32")          # 16 kHz mono
+inputs = proc([audio], sampling_rate=16000, return_tensors="pt")
+with torch.no_grad():
+    out = model.generate(input_features=inputs["input_features"], attention_mask=inputs["attention_mask"])
+print(proc.batch_decode(getattr(out, "sequences", out), skip_special_tokens=True)[0])
+```
+
+GGUF with [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) (Metal, CPU, Vulkan): see [{name}-GGUF](https://huggingface.co/{HF_USER}/{name}-GGUF).
+
+<details><summary>Training</summary>
+
+- Data: {data_hours(["en", "nl"])}, English and Dutch from FLEURS train (CC-BY-4.0), Common Voice 22 train (CC0) and VoxPopuli train (CC0). Cased, punctuated transcripts only. About 60% Dutch, plus 40% English replay, so the model doesn't forget English. No test or dev audio was trained on. VoxPopuli and FLEURS train are in the mix, so their test sets are in domain; LibriSpeech, AMI, Earnings-22, GigaSpeech and SPGISpeech are out of domain.
+- Method: Phonon-2.5 English's five-value container was expanded to dense fp32. Then LoRA (r=32) was trained on every encoder attention and feed-forward projection and merged, with a full update of the LSTM decoder, joint and encoder projector. Training used transformers' TDT loss and SpecAugment. The checkpoint was picked on an English + Dutch dev set (FLEURS, Common Voice and VoxPopuli dev).
+- Release gate: published only because the English average over the 7 leaderboard sets is not worse than Phonon-2.5 English, no English set is more than 3% worse, and Dutch is clearly better than Phonon-2.5 English and close to Phonon-2.5.
+- Hardware: one Apple M4 MacBook Air (16 GB), PyTorch MPS.
+- Weights are dense fp32 (2.5 GB). For a small download use the GGUF files.
+</details>
+
+<details><summary>Licence and credits</summary>
+
+CC-BY-4.0. Derived from [Phonon-2.5 English](https://huggingface.co/FermionResearch/Phonon-2.5-English) by Fermion Research and [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) by NVIDIA; see `NOTICE`, which also carries Fermion's notice (its training data includes CHiME-6 and SPGISpeech). Not an official Fermion Research or NVIDIA release.
+</details>
+"""
+
+
 def card_gguf(name: str, family: str, runtime: str) -> str:
-    lic = "cc-by-4.0" if family.startswith("eu") else "apache-2.0"
+    lic = "apache-2.0" if family.startswith("qwen") else "cc-by-4.0"
     return f"""---
 license: {lic}
 base_model: {HF_USER}/{name}
@@ -188,19 +293,40 @@ GGUF files of [{name}](https://huggingface.co/{HF_USER}/{name}) for {runtime}.
 {gguf_table(family, name)}
 
 ```bash
-{"transcribe-cli -m " + name + "-Q8_0.gguf audio.wav" if family.startswith("eu") else "llama-server -m " + name + "-Q8_0.gguf --mmproj mmproj-" + name + "-F16.gguf  # then POST audio to /v1/chat/completions"}
+{"transcribe-cli -m " + name + "-Q8_0.gguf audio.wav" if not family.startswith("qwen") else "llama-server -m " + name + "-Q8_0.gguf --mmproj mmproj-" + name + "-F16.gguf  # then POST audio to /v1/chat/completions"}
 ```
 
 Licence and credits as in the [main repo](https://huggingface.co/{HF_USER}/{name}).
 """
 
 
+TARGETS_EN_NL = [("en-nl", "en-nl", "en-nl", EN_NL_NAME, lambda: card_en_nl(), "transcribe.cpp")]
 TARGETS = [  # (family, kind, fam-key in gate, release name, card fn, runtime)
     ("eu", "main", "parakeet", EU_NAME, lambda: card_eu(False), "transcribe.cpp"),
     ("qwen", "main", "qwen", QW_NAME, lambda: card_qw(False), "llama.cpp"),
     ("eu-fast", "fast", "parakeet", f"{EU_NAME}-Fast", lambda: card_eu(True), "transcribe.cpp"),
     ("qwen-fast", "fast", "qwen", f"{QW_NAME}-Fast", lambda: card_qw(True), "llama.cpp"),
 ]
+
+
+def verify_upload(api: HfApi, repo: str, d: Path) -> None:
+    """Every local file must be in the repo with the same size (LFS files also by sha256)."""
+    import hashlib
+    remote = {f.path: f for f in api.get_paths_info(repo, [p.name for p in d.iterdir() if p.is_file()])}
+    for p in d.iterdir():
+        if not p.is_file():
+            continue
+        r = remote.get(p.name)
+        if r is None or r.size != p.stat().st_size:
+            raise SystemExit(f"upload check failed for {repo}/{p.name}")
+        if getattr(r, "lfs", None):
+            h = hashlib.sha256()
+            with open(p, "rb") as f:
+                for b in iter(lambda: f.read(1 << 20), b""):
+                    h.update(b)
+            if h.hexdigest() != r.lfs.sha256:
+                raise SystemExit(f"upload checksum differs for {repo}/{p.name}")
+    print(f"upload verified: {repo} ({len(remote)} files)")
 
 
 def main() -> None:
@@ -211,7 +337,7 @@ def main() -> None:
     a = ap.parse_args()
     api = HfApi()
     done = []
-    for family, kind, gk, name, card, runtime in TARGETS:
+    for family, kind, gk, name, card, runtime in (TARGETS_EN_NL if PROFILE == "en-nl" else TARGETS):
         if a.only and family not in a.only:
             continue
         repo = f"{HF_USER}/{name}"
@@ -229,7 +355,9 @@ def main() -> None:
             api.upload_file(path_or_fileobj=str(d / "README.md"), path_in_repo="README.md", repo_id=repo)
         else:
             api.upload_folder(folder_path=str(d), repo_id=repo, commit_message=f"{name}")
-            subprocess.run([str(ROOT / "envs" / "qwen" / "bin" / "python"), "-m", "lvw_stt.gguf.ladder",
+            verify_upload(api, repo, d)
+            py = "parakeet" if PROFILE == "en-nl" else "qwen"
+            subprocess.run([str(ROOT / "envs" / py / "bin" / "python"), "-m", "lvw_stt.gguf.ladder",
                             "--family", family, "--upload"], cwd=ROOT, check=True)
         gg = RESULTS / f"README-{name}-GGUF.md"
         gg.write_text(card_gguf(name, family, runtime))
@@ -242,8 +370,9 @@ def main() -> None:
         tmp = RESULTS / "eval-repo"
         tmp.mkdir(exist_ok=True)
         keep = ("id", "lang", "source", "split", "text", "dur")
-        for src, dst in [(DATA / "train" / "manifest.jsonl", "train-manifest.jsonl")] + \
-                [(DATA / "eval" / f"{s}.jsonl", f"{s}-manifest.jsonl") for s in ("fleurs-test", "fleurs-dev", "cv22-test")]:
+        sets = EN_NL_SETS + [EN_NL_DEV.stem] if PROFILE == "en-nl" else ["fleurs-test", "fleurs-dev", "cv22-test"]
+        for src, dst in [(TRAIN_DIR / "manifest.jsonl", "train-manifest.jsonl")] + \
+                [(DATA / "eval" / f"{s}.jsonl", f"{s}-manifest.jsonl") for s in sets]:
             with open(tmp / dst, "w", encoding="utf-8") as f:
                 for r in read_jsonl(src):
                     f.write(json.dumps({k: r[k] for k in keep}, ensure_ascii=False) + "\n")
@@ -254,7 +383,7 @@ def main() -> None:
     if a.public and done:
         api.update_repo_settings(EVAL_REPO, private=False, repo_type="dataset")
         c = api.create_collection(title="LvW-STT", namespace=HF_USER, private=False, exists_ok=True,
-                                  description="Speech-to-text fine-tunes of Phonon-2.5 and Qwen3-ASR-0.6B, with GGUF ladders")
+                                  description="Speech-to-text fine-tunes of Phonon and Qwen3-ASR models, with GGUF ladders")
         for r in done:
             for item in (r, r + "-GGUF"):
                 api.add_collection_item(c.slug, item_id=item, item_type="model", exists_ok=True)

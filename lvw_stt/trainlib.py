@@ -15,6 +15,7 @@ import torch
 
 from lvw_stt.data import DATA, read_jsonl
 from lvw_stt.disk import ROOT, free_gb, guard
+from lvw_stt.paths import EN_NL_DEV, PROFILE, TRAIN_DIR
 
 
 def mem_gb() -> float:
@@ -33,21 +34,42 @@ def device() -> torch.device:
 
 
 def train_rows(codes: list[str], smoke: bool, seed: int) -> list[dict]:
-    rows = [r for r in read_jsonl(DATA / "train" / "manifest.jsonl") if r["lang"] in codes]
+    rows = [r for r in read_jsonl(TRAIN_DIR / "manifest.jsonl") if r["lang"] in codes]
     assert all(r["split"] == "train" for r in rows), "non-train row in the training manifest"
     if not rows:
         raise SystemExit("no training data; run: bash run.sh prepare")
+    leak_check(rows)
     if smoke:
         random.Random(seed).shuffle(rows)
         rows = rows[:64]
     return rows
 
 
+def leak_check(rows: list[dict]) -> None:
+    """No training clip may also be a scoring or dev clip (same id or same audio file)."""
+    ids, paths = {r["id"] for r in rows}, {r["path"] for r in rows}
+    for man in (DATA / "eval").glob("*.jsonl"):
+        for r in read_jsonl(man):
+            if r["id"] in ids or r["path"] in paths:
+                raise SystemExit(f"leak: training clip {r['id']} is also in {man.name}")
+
+
+def dev_group(r: dict) -> str:
+    """Checkpoint selection averages over these groups: language (eu) or language+source (en-nl, so a checkpoint
+    cannot win on one domain while losing another)."""
+    return f"{r['lang']}/{r['source']}" if PROFILE == "en-nl" else r["lang"]
+
+
 def dev_rows(codes: list[str], per_lang: int) -> list[dict]:
+    """per_lang clips per dev group."""
+    src = EN_NL_DEV if PROFILE == "en-nl" else DATA / "eval" / "fleurs-dev.jsonl"
     rows, n = [], {}
-    for r in read_jsonl(DATA / "eval" / "fleurs-dev.jsonl"):
-        if r["lang"] in codes and n.get(r["lang"], 0) < per_lang:
-            rows.append(r); n[r["lang"]] = n.get(r["lang"], 0) + 1
+    for r in read_jsonl(src):
+        g = dev_group(r)
+        if r["lang"] in codes and n.get(g, 0) < per_lang:
+            rows.append(r); n[g] = n.get(g, 0) + 1
+    if PROFILE == "en-nl" and not rows:
+        raise SystemExit(f"no dev clips in {src}; run: LVW_PROFILE=en-nl bash run.sh eval-sets")
     return rows
 
 
