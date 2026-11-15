@@ -239,7 +239,7 @@ Speech recognition for English and Dutch. It is a fine-tune of [Phonon-2.5 Engli
 
 ## Benchmarks
 
-Word error rate, %, lower is better; the best value in each row is in bold. The scoring code and Whisper-style normalisation are the Open ASR Leaderboard's. The English sets are **random subsets** of the leaderboard's test sets (clip counts in brackets), not the full sets, so they are not directly comparable to leaderboard rows. All three models were scored on exactly the same clips.
+Word error rate, %, lower is better; the best value in each row is in bold. Scoring is Open ASR Leaderboard-style: Whisper's English text normaliser for English, its basic normaliser for Dutch, corpus WER with jiwer. The English sets are **random subsets** of the leaderboard's test sets (clip counts in brackets), not the full sets, so they are not directly comparable to leaderboard rows. All three models were scored on exactly the same clips.
 
 {en_nl_table(tag, model)}
 
@@ -375,7 +375,8 @@ def main() -> None:
                 [(DATA / "eval" / f"{s}.jsonl", f"{s}-manifest.jsonl") for s in sets]:
             with open(tmp / dst, "w", encoding="utf-8") as f:
                 for r in read_jsonl(src):
-                    f.write(json.dumps({k: r[k] for k in keep}, ensure_ascii=False) + "\n")
+                    f.write(json.dumps({k: r[k] for k in keep if not (dst.startswith("esb-") and k == "text")},
+                                       ensure_ascii=False) + "\n")  # ESB transcripts (SPGISpeech, GigaSpeech, ...) are not ours to redistribute
         api.upload_folder(folder_path=str(tmp), repo_id=EVAL_REPO, repo_type="dataset", path_in_repo="manifests")
         api.upload_folder(folder_path=str(RESULTS), repo_id=EVAL_REPO, repo_type="dataset", path_in_repo="results",
                           allow_patterns=["*.json", "*.md"])
