@@ -8,3 +8,7 @@ release/
 __pycache__/
 *.gguf
 *.safetensors
+.DS_Store
+._*
+*.ogg
+*.flac

@@ -1,0 +1,16 @@
+LvW-STT
+Copyright (c) 2026 Lucas Van De Weerd
+Code licensed under the MIT License (see LICENSE).
+
+Not included in this repository (downloaded or cloned by `bash run.sh setup`):
+- FermionResearch/Phonon-2.5 and Phonon-2.5-English (CC-BY-4.0)
+- Qwen/Qwen3-ASR-0.6B (Apache-2.0)
+- nvidia/parakeet-tdt-0.6b-v3 config and tokenizer (CC-BY-4.0)
+- handy-computer/transcribe.cpp (see its LICENSE and THIRD-PARTY-LICENSES.md)
+- ggml-org/llama.cpp (MIT)
+- QwenLM/Qwen3-ASR (Apache-2.0)
+
+Datasets used for training and evaluation (downloaded, not included):
+- FLEURS (CC-BY-4.0), Common Voice 22 (CC0-1.0), VoxPopuli (CC0-1.0)
+
+lvw_stt/gguf/patch_transcribe.py edits a file inside the transcribe.cpp clone at setup time; the patched file stays in the local clone.
