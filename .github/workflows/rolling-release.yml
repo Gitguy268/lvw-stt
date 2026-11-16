@@ -34,7 +34,7 @@ jobs:
           mkdir -p out
           if [ -n "$(ls -A out)" ]; then (cd out && sha256sum -- * > SHA256SUMS.txt); fi
           ls -l out
-          notes="Built automatically from the latest commit on \`$BRANCH\` ([\`${SHA::7}\`](https://github.com/$GH_REPO/commit/$SHA), $(date -u '+%Y-%m-%d %H:%M UTC')). This release is replaced on every push, so it can change at any time."
+          notes="Built automatically from the latest commit on \`$BRANCH\` ([\`${SHA::7}\`](https://github.com/$GH_REPO/commit/$SHA), $(date -u '+%Y-%m-%d %H:%M UTC')). This release is replaced on every push, so it can change at any time. This project has no prebuilt download: use the source code archive below."
           # Point the tag at this commit (create it the first time).
           if gh api "repos/$GH_REPO/git/ref/tags/latest" > /dev/null 2>&1; then
             gh api -X PATCH "repos/$GH_REPO/git/refs/tags/latest" -f sha="$SHA" -F force=true > /dev/null
